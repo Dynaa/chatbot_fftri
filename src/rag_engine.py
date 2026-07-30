@@ -1,8 +1,21 @@
 import os
 from typing import List, Dict, Any, Optional
 from PIL import Image
-from google import genai
-from google.genai import types
+
+# Import SDK principal (google-genai)
+try:
+    from google import genai
+    from google.genai import types
+    HAS_GENAI = True
+except ImportError:
+    HAS_GENAI = False
+
+# Import SDK legacy fallback (google-generativeai)
+try:
+    import google.generativeai as genai_legacy
+    HAS_GENAI_LEGACY = True
+except ImportError:
+    HAS_GENAI_LEGACY = False
 
 from src.prompt_templates import (
     SYSTEM_PROMPT, 
@@ -13,47 +26,21 @@ from src.prompt_templates import (
 class RAGEngine:
     """
     Moteur RAG multimodal combinant la recherche documentaire FFTRI et l'IA Gemini.
-    Sélectionne dynamiquement le modèle fonctionnel adapté à la clé API fournie.
+    Prend en charge les SDK google-genai et google-generativeai avec messages d'aide clairs.
     """
     def __init__(self, vector_store, api_key: Optional[str] = None):
         self.vector_store = vector_store
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
-        self._cached_model = None
         if self.api_key:
+            self.api_key = self.api_key.strip()
+            
+        if self.api_key and HAS_GENAI:
             self.client = genai.Client(api_key=self.api_key)
         else:
             self.client = None
 
-    def _get_candidate_models(self) -> List[str]:
-        """
-        Détermine dynamiquement la liste des modèles Gemini supportés par la clé API.
-        """
-        candidates = []
-        if self.client:
-            try:
-                models = list(self.client.models.list())
-                for m in models:
-                    m_name = getattr(m, "name", "")
-                    methods = getattr(m, "supported_generation_methods", []) or []
-                    if "generateContent" in methods:
-                        candidates.append(m_name)
-            except Exception:
-                pass
-
-        # Noms de modèles standards par défaut si list_models ne répond pas ou est restreint
-        default_fallbacks = [
-            "gemini-2.0-flash",
-            "gemini-1.5-flash",
-            "gemini-1.5-flash-latest",
-            "gemini-1.5-pro",
-            "gemini-2.5-flash"
-        ]
-
-        for fb in default_fallbacks:
-            if fb not in candidates:
-                candidates.append(fb)
-
-        return candidates
+        if self.api_key and HAS_GENAI_LEGACY:
+            genai_legacy.configure(api_key=self.api_key)
 
     def query_text(self, question: str, top_k: int = 4) -> Dict[str, Any]:
         """
@@ -73,7 +60,7 @@ class RAGEngine:
             user_query=question
         )
 
-        if not self.client:
+        if not self.api_key:
             return {
                 "answer": (
                     "⚠️ **Clé API Gemini non configurée.**\n\n"
@@ -84,28 +71,59 @@ class RAGEngine:
                 "sources": retrieved_chunks
             }
 
-        candidates = self._get_candidate_models()
+        # 1. Essai avec SDK google-genai
+        models_to_try = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.5-flash"]
         last_error = None
 
-        for model_name in candidates:
-            try:
-                response = self.client.models.generate_content(
-                    model=model_name,
-                    contents=prompt_user,
-                    config=types.GenerateContentConfig(
-                        system_instruction=SYSTEM_PROMPT,
-                        temperature=0.1
+        if self.client:
+            for m_name in models_to_try:
+                try:
+                    response = self.client.models.generate_content(
+                        model=m_name,
+                        contents=prompt_user,
+                        config=types.GenerateContentConfig(
+                            system_instruction=SYSTEM_PROMPT,
+                            temperature=0.1
+                        )
                     )
-                )
-                return {
-                    "answer": response.text,
-                    "sources": retrieved_chunks
-                }
-            except Exception as e:
-                last_error = e
+                    return {
+                        "answer": response.text,
+                        "sources": retrieved_chunks
+                    }
+                except Exception as e:
+                    last_error = e
+
+        # 2. Essai de secours avec SDK google-generativeai
+        if HAS_GENAI_LEGACY:
+            for m_name in ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]:
+                try:
+                    g_model = genai_legacy.GenerativeModel(
+                        model_name=m_name,
+                        system_instruction=SYSTEM_PROMPT
+                    )
+                    res = g_model.generate_content(prompt_user)
+                    return {
+                        "answer": res.text,
+                        "sources": retrieved_chunks
+                    }
+                except Exception as e:
+                    last_error = e
+
+        # Gestion explicite des erreurs d'authentification / 404
+        err_msg = str(last_error)
+        if "404" in err_msg or "NOT_FOUND" in err_msg:
+            help_text = (
+                "⚠️ **Erreur d'accès à l'API Gemini (404 NOT_FOUND)**\n\n"
+                "La clé API saisie semble ne pas disposer des autorisations sur les modèles Gemini standard.\n\n"
+                "**Comment obtenir une clé API fonctionnelle en 1 minute ?**\n"
+                "1. Allez sur **[Google AI Studio](https://aistudio.google.com/)**\n"
+                "2. Cliquez sur le bouton bleu **'Create API Key'**\n"
+                "3. Copiez la clé et collez-la dans la barre latérale à gauche."
+            )
+            return {"answer": help_text, "sources": retrieved_chunks}
 
         return {
-            "answer": f"Erreur lors de la génération IA : {str(last_error)}",
+            "answer": f"Erreur lors de la génération IA : {err_msg}",
             "sources": retrieved_chunks
         }
 
@@ -122,7 +140,7 @@ class RAGEngine:
             user_query=question
         )
 
-        if not self.client:
+        if not self.api_key:
             return {
                 "answer": (
                     "⚠️ **Clé API Gemini non configurée.**\n\n"
@@ -133,28 +151,52 @@ class RAGEngine:
                 "sources": retrieved_chunks
             }
 
-        candidates = self._get_candidate_models()
+        models_to_try = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.5-flash"]
         last_error = None
 
-        for model_name in candidates:
-            try:
-                response = self.client.models.generate_content(
-                    model=model_name,
-                    contents=[prompt_user, image],
-                    config=types.GenerateContentConfig(
-                        system_instruction=SYSTEM_PROMPT,
-                        temperature=0.1
+        if self.client:
+            for m_name in models_to_try:
+                try:
+                    response = self.client.models.generate_content(
+                        model=m_name,
+                        contents=[prompt_user, image],
+                        config=types.GenerateContentConfig(
+                            system_instruction=SYSTEM_PROMPT,
+                            temperature=0.1
+                        )
                     )
-                )
-                return {
-                    "answer": response.text,
-                    "sources": retrieved_chunks
-                }
-            except Exception as e:
-                last_error = e
+                    return {
+                        "answer": response.text,
+                        "sources": retrieved_chunks
+                    }
+                except Exception as e:
+                    last_error = e
+
+        if HAS_GENAI_LEGACY:
+            for m_name in ["gemini-1.5-flash", "gemini-1.5-pro"]:
+                try:
+                    g_model = genai_legacy.GenerativeModel(
+                        model_name=m_name,
+                        system_instruction=SYSTEM_PROMPT
+                    )
+                    res = g_model.generate_content([prompt_user, image])
+                    return {
+                        "answer": res.text,
+                        "sources": retrieved_chunks
+                    }
+                except Exception as e:
+                    last_error = e
+
+        err_msg = str(last_error)
+        if "404" in err_msg or "NOT_FOUND" in err_msg:
+            help_text = (
+                "⚠️ **Erreur d'accès à l'API Gemini (404 NOT_FOUND)**\n\n"
+                "La clé API n'a pas accès aux modèles d'analyse d'image. Obtenez une clé gratuite sur **[Google AI Studio](https://aistudio.google.com/)**."
+            )
+            return {"answer": help_text, "sources": retrieved_chunks}
 
         return {
-            "answer": f"Erreur lors de l'analyse d'image par l'IA : {str(last_error)}",
+            "answer": f"Erreur lors de l'analyse d'image par l'IA : {err_msg}",
             "sources": retrieved_chunks
         }
 
