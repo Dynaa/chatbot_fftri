@@ -56,7 +56,7 @@ class RAGEngine:
 
         try:
             response = self.client.models.generate_content(
-                model="gemini-2.5-flash",
+                model="gemini-2.0-flash",
                 contents=prompt_user,
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_PROMPT,
@@ -115,7 +115,7 @@ class RAGEngine:
 
         try:
             response = self.client.models.generate_content(
-                model="gemini-2.5-flash",
+                model="gemini-2.0-flash",
                 contents=[prompt_user, image],
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_PROMPT,

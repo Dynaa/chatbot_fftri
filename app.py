@@ -20,7 +20,7 @@ st.set_page_config(
 
 # Style CSS personnalisé FFTRI
 st.markdown("""
-    <style:
+    <style>
     .main-header {
         font-size: 2.2rem;
         color: #0d3b66;
