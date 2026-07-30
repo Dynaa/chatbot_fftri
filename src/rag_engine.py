@@ -139,21 +139,16 @@ class RAGEngine:
                     last_error = e
 
         err_msg = str(last_error)
-        if "404" in err_msg or "NOT_FOUND" in err_msg:
-            help_text = (
-                "⚠️ **Erreur de propagation Google API (404 NOT_FOUND)**\n\n"
-                "Votre clé API AI Studio (`chatbotfftri`) est bien enregistrée ! Cependant, Google met généralement **1 à 3 minutes** à propager les autorisations des nouvelles clés API sur l'ensemble de ses serveurs.\n\n"
-                "**Que faire ?**\n"
-                "1. Patientez 1 minute puis réessayez de cliquer sur **'Interroger le règlement'**.\n"
-                "2. Vérifiez que la clé copiée dans la barre latérale ne contient aucun espace supplémentaire.\n"
-                "3. Si l'erreur persiste, vous pouvez créer une seconde clé sur AI Studio et la coller dans la barre latérale."
-            )
-            return {"answer": help_text, "sources": retrieved_chunks}
-
-        return {
-            "answer": f"Erreur lors de la génération IA : {err_msg}",
-            "sources": retrieved_chunks
-        }
+        help_text = (
+            f"⚠️ **Erreur lors de la génération IA avec la clé fournie**\n\n"
+            f"**Détail de l'erreur transmise par Google API** :\n"
+            f"```\n{err_msg}\n```\n\n"
+            f"**Guide de dépannage rapide** :\n"
+            f"1. Assurez-vous que la clé API copiée dans la barre latérale est exacte.\n"
+            f"2. Si la clé vient d'être créée sur Google AI Studio, l'activation peut prendre jusqu'à 3 minutes.\n"
+            f"3. Vous pouvez créer une nouvelle clé sur **[Google AI Studio](https://aistudio.google.com/)** en cliquant sur *Create API Key*."
+        )
+        return {"answer": help_text, "sources": retrieved_chunks}
 
     def query_multimodal(self, image: Image.Image, question: str = "Analyser la conformité de cette situation de course", top_k: int = 4) -> Dict[str, Any]:
         """
@@ -216,17 +211,12 @@ class RAGEngine:
                     last_error = e
 
         err_msg = str(last_error)
-        if "404" in err_msg or "NOT_FOUND" in err_msg:
-            help_text = (
-                "⚠️ **Erreur de propagation Google API (404 NOT_FOUND)**\n\n"
-                "La clé API est récente et en cours d'activation sur les serveurs Google (délai de 1 à 3 min). Réessayez dans un instant."
-            )
-            return {"answer": help_text, "sources": retrieved_chunks}
-
-        return {
-            "answer": f"Erreur lors de l'analyse d'image par l'IA : {err_msg}",
-            "sources": retrieved_chunks
-        }
+        help_text = (
+            f"⚠️ **Erreur lors de l'analyse visuelle par l'IA**\n\n"
+            f"**Détail de l'erreur transmise par Google API** :\n"
+            f"```\n{err_msg}\n```"
+        )
+        return {"answer": help_text, "sources": retrieved_chunks}
 
     def _format_context(self, chunks: List[Dict[str, Any]]) -> str:
         formatted = []
