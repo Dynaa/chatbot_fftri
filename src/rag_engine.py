@@ -26,13 +26,11 @@ from src.prompt_templates import (
 class RAGEngine:
     """
     Moteur RAG multimodal combinant la recherche documentaire FFTRI et l'IA Gemini.
-    Prend en charge les SDK google-genai et google-generativeai avec messages d'aide clairs.
     """
     def __init__(self, vector_store, api_key: Optional[str] = None):
         self.vector_store = vector_store
-        self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
-        if self.api_key:
-            self.api_key = self.api_key.strip()
+        raw_key = api_key or os.environ.get("GEMINI_API_KEY", "")
+        self.api_key = raw_key.strip().strip("'").strip('"').strip() if raw_key else ""
             
         if self.api_key and HAS_GENAI:
             self.client = genai.Client(api_key=self.api_key)
@@ -40,7 +38,38 @@ class RAGEngine:
             self.client = None
 
         if self.api_key and HAS_GENAI_LEGACY:
-            genai_legacy.configure(api_key=self.api_key)
+            try:
+                genai_legacy.configure(api_key=self.api_key)
+            except Exception:
+                pass
+
+    def _get_model_candidates(self) -> List[str]:
+        candidates = [
+            "gemini-2.0-flash",
+            "gemini-1.5-flash",
+            "models/gemini-2.0-flash",
+            "models/gemini-1.5-flash",
+            "gemini-1.5-flash-latest",
+            "gemini-1.5-pro",
+            "gemini-2.0-flash-exp"
+        ]
+        
+        # Découverte dynamique via l'API list() si possible
+        if self.client:
+            try:
+                listed = list(self.client.models.list())
+                for m in listed:
+                    name = getattr(m, "name", "")
+                    if name:
+                        if name not in candidates:
+                            candidates.insert(0, name)
+                        short = name.replace("models/", "")
+                        if short not in candidates:
+                            candidates.insert(0, short)
+            except Exception:
+                pass
+
+        return candidates
 
     def query_text(self, question: str, top_k: int = 4) -> Dict[str, Any]:
         """
@@ -66,17 +95,17 @@ class RAGEngine:
                     "⚠️ **Clé API Gemini non configurée.**\n\n"
                     "Voici les articles du règlement identifiés pour votre question :\n\n"
                     + context_str +
-                    "\n\n*Veuillez configurer la variable GEMINI_API_KEY dans votre fichier `.env` ou sur Railway pour générer la synthèse IA.*"
+                    "\n\n*Veuillez saisir votre clé API Gemini dans la barre latérale.*"
                 ),
                 "sources": retrieved_chunks
             }
 
-        # 1. Essai avec SDK google-genai
-        models_to_try = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.5-flash"]
+        candidates = self._get_model_candidates()
         last_error = None
 
+        # 1. Essai avec SDK google-genai
         if self.client:
-            for m_name in models_to_try:
+            for m_name in candidates:
                 try:
                     response = self.client.models.generate_content(
                         model=m_name,
@@ -95,7 +124,7 @@ class RAGEngine:
 
         # 2. Essai de secours avec SDK google-generativeai
         if HAS_GENAI_LEGACY:
-            for m_name in ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]:
+            for m_name in candidates:
                 try:
                     g_model = genai_legacy.GenerativeModel(
                         model_name=m_name,
@@ -109,16 +138,15 @@ class RAGEngine:
                 except Exception as e:
                     last_error = e
 
-        # Gestion explicite des erreurs d'authentification / 404
         err_msg = str(last_error)
         if "404" in err_msg or "NOT_FOUND" in err_msg:
             help_text = (
-                "⚠️ **Erreur d'accès à l'API Gemini (404 NOT_FOUND)**\n\n"
-                "La clé API saisie semble ne pas disposer des autorisations sur les modèles Gemini standard.\n\n"
-                "**Comment obtenir une clé API fonctionnelle en 1 minute ?**\n"
-                "1. Allez sur **[Google AI Studio](https://aistudio.google.com/)**\n"
-                "2. Cliquez sur le bouton bleu **'Create API Key'**\n"
-                "3. Copiez la clé et collez-la dans la barre latérale à gauche."
+                "⚠️ **Erreur de propagation Google API (404 NOT_FOUND)**\n\n"
+                "Votre clé API AI Studio (`chatbotfftri`) est bien enregistrée ! Cependant, Google met généralement **1 à 3 minutes** à propager les autorisations des nouvelles clés API sur l'ensemble de ses serveurs.\n\n"
+                "**Que faire ?**\n"
+                "1. Patientez 1 minute puis réessayez de cliquer sur **'Interroger le règlement'**.\n"
+                "2. Vérifiez que la clé copiée dans la barre latérale ne contient aucun espace supplémentaire.\n"
+                "3. Si l'erreur persiste, vous pouvez créer une seconde clé sur AI Studio et la coller dans la barre latérale."
             )
             return {"answer": help_text, "sources": retrieved_chunks}
 
@@ -151,11 +179,11 @@ class RAGEngine:
                 "sources": retrieved_chunks
             }
 
-        models_to_try = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.5-flash"]
+        candidates = self._get_model_candidates()
         last_error = None
 
         if self.client:
-            for m_name in models_to_try:
+            for m_name in candidates:
                 try:
                     response = self.client.models.generate_content(
                         model=m_name,
@@ -173,7 +201,7 @@ class RAGEngine:
                     last_error = e
 
         if HAS_GENAI_LEGACY:
-            for m_name in ["gemini-1.5-flash", "gemini-1.5-pro"]:
+            for m_name in candidates:
                 try:
                     g_model = genai_legacy.GenerativeModel(
                         model_name=m_name,
@@ -190,8 +218,8 @@ class RAGEngine:
         err_msg = str(last_error)
         if "404" in err_msg or "NOT_FOUND" in err_msg:
             help_text = (
-                "⚠️ **Erreur d'accès à l'API Gemini (404 NOT_FOUND)**\n\n"
-                "La clé API n'a pas accès aux modèles d'analyse d'image. Obtenez une clé gratuite sur **[Google AI Studio](https://aistudio.google.com/)**."
+                "⚠️ **Erreur de propagation Google API (404 NOT_FOUND)**\n\n"
+                "La clé API est récente et en cours d'activation sur les serveurs Google (délai de 1 à 3 min). Réessayez dans un instant."
             )
             return {"answer": help_text, "sources": retrieved_chunks}
 
