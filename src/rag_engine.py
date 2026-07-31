@@ -1,6 +1,10 @@
 import os
+import warnings
 from typing import List, Dict, Any, Optional
 from PIL import Image
+
+# Ignorer l'avertissement de dépréciation de google-generativeai
+warnings.filterwarnings("ignore", category=FutureWarning, module="google.generativeai")
 
 # Import SDK principal (google-genai)
 try:
